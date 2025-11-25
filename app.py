@@ -2,38 +2,109 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-import matplotlib.pyplot as plt
-import matplotlib as mpl  # 用于获取 matplotlib 版本
+import plotly.express as px
 
 # ------------------ Page config ------------------
-st.set_page_config(
-    page_title="VTE Risk Digital Twin Simulator",
-    layout="wide",
+st.set_page_config(page_title="VTE Risk Digital Twin Simulator", layout="wide")
+
+PLOTLY_TEMPLATE = "plotly_white"
+PRIMARY = "#2ECC71"
+GRAY = "#BDC3C7"
+DARK = "#2C3E50"
+RED = "#E74C3C"
+BLUE = "#3498DB"
+
+# ------------------ Global CSS (clean dashboard style) ------------------
+st.markdown(
+    """
+    <style>
+      /* Overall app typography + spacing */
+      html, body, [class*="css"]  {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+          color: #1f2937;
+      }
+      .block-container {
+          padding-top: 1.2rem;
+          padding-bottom: 2.5rem;
+      }
+      /* Sidebar */
+      section[data-testid="stSidebar"] {
+          background: #F8FAFC;
+          border-right: 1px solid #E5E7EB;
+      }
+
+      /* KPI cards */
+      div[data-testid="metric-container"] {
+          background: white;
+          border: 1px solid #EEF2F7;
+          padding: 14px 14px 10px 14px;
+          border-radius: 14px;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+      }
+
+      /* Tabs style */
+      button[data-baseweb="tab"] {
+          font-weight: 600;
+          padding: 10px 14px;
+      }
+
+      /* Plotly charts container */
+      .stPlotlyChart {
+          background: white;
+          border: 1px solid #EEF2F7;
+          border-radius: 14px;
+          padding: 8px;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+      }
+
+      /* Buttons */
+      .stButton > button {
+          border-radius: 10px;
+          font-weight: 600;
+          border: 1px solid #E5E7EB;
+          padding: 0.45rem 0.9rem;
+      }
+      .stButton > button:hover {
+          border-color: #CBD5E1;
+          background: #F8FAFC;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
-
-# Use a clean matplotlib style
-plt.style.use("ggplot")
-
 
 # ------------------ 1. Load system ------------------
 @st.cache_resource
 def load_system():
-    # Path to the exported system from your offline script
     return joblib.load("vte_system.pkl")
-
 
 system = load_system()
 risk_model = system["risk_model"]
-coef_matrix = system["coef_matrix"]
+coef_matrix = system["coef_matrix"]   # proteins x behaviors
 proteins = system["proteins"]
-behaviors_map = system["behaviors"]      # Name -> column
-behavior_std = system["behavior_std"]    # behavior SD
+behaviors_map = system["behaviors"]
+behavior_std = system["behavior_std"]
 behavior_names = list(behaviors_map.keys())
 
+# ------------------ 2. Helpers ------------------
+def init_state():
+    """Initialize session_state for sliders if missing."""
+    for p in proteins:
+        st.session_state.setdefault(f"base_{p}", 0.0)
+    for b in behavior_names:
+        st.session_state.setdefault(f"delta_{b}", 0.0)
 
-# ------------------ 2. Title & intro ------------------
+def reset_all():
+    """Reset baseline & delta sliders to 0."""
+    for p in proteins:
+        st.session_state[f"base_{p}"] = 0.0
+    for b in behavior_names:
+        st.session_state[f"delta_{b}"] = 0.0
+
+init_state()
+
+# ------------------ 3. Title & intro ------------------
 st.title("🧬 VTE Risk Digital Twin Simulator")
-
 st.markdown(
     """
 Adjust lifestyle behaviors in the sidebar to simulate **plasma protein expression**
@@ -41,296 +112,332 @@ changes and estimate the impact on **venous thromboembolism (VTE) risk**.
 """
 )
 
-
-# ------------------ 3. Sidebar: baseline & interventions ------------------
+# ------------------ 4. Sidebar ------------------
 st.sidebar.header("1. Baseline Protein Profile")
-st.sidebar.info("By default, all proteins are set to the population mean (Z-score = 0).")
+st.sidebar.caption("All proteins default to population mean (Z-score = 0).")
+
+# Reset button
+st.sidebar.button("🔄 Reset all sliders", on_click=reset_all)
 
 baseline_vals = {}
 with st.sidebar.expander("Advanced: Tune baseline protein levels", expanded=False):
     for p in proteins:
-        baseline_vals[p] = st.slider(f"{p} (Z-score)", -3.0, 3.0, 0.0, 0.1)
+        baseline_vals[p] = st.slider(
+            f"{p} (Z-score)",
+            -3.0, 3.0,
+            key=f"base_{p}",
+            value=st.session_state[f"base_{p}"],
+            step=0.1
+        )
 
 st.sidebar.header("2. Behavior Interventions")
 intervention_deltas = {}
-
 for b_name in behavior_names:
-    # Use SD to define a reasonable slider range
     std = float(behavior_std[b_name])
     min_val = float(-2.0 * std)
     max_val = float(2.0 * std)
     step = float(std / 10.0) if std > 0 else 0.1
 
-    val = st.sidebar.slider(f"Δ {b_name}", min_val, max_val, 0.0, step)
-    intervention_deltas[b_name] = val
+    intervention_deltas[b_name] = st.sidebar.slider(
+        f"Δ {b_name}",
+        min_val, max_val,
+        key=f"delta_{b_name}",
+        value=st.session_state[f"delta_{b_name}"],
+        step=step
+    )
 
-
-# ------------------ 4. Core calculation ------------------
-# A. Baseline proteins & risk
+# ------------------ 5. Core calculation ------------------
 df_base = pd.DataFrame([list(baseline_vals.values())], columns=proteins)
 base_prob = risk_model.predict_proba(df_base)[0, 1]
 
-# B. Protein drift from behaviors (linear mapping)
 drift = np.zeros(len(proteins))
 for b_name, delta in intervention_deltas.items():
     if delta != 0:
-        betas = coef_matrix.loc[proteins, b_name].values  # protein x behavior beta
+        betas = coef_matrix.loc[proteins, b_name].values
         drift += betas * delta
 
-# C. New protein state & risk
-new_vals = df_base.values[0] + drift
-new_vals = np.clip(new_vals, -5, 5)  # safety clip
+new_vals = np.clip(df_base.values[0] + drift, -5, 5)
 df_new = pd.DataFrame([new_vals], columns=proteins)
 new_prob = risk_model.predict_proba(df_new)[0, 1]
 
-# D. Risk changes
 risk_reduction_abs = base_prob - new_prob
-risk_reduction_rel = (base_prob - new_prob) / base_prob if base_prob > 0 else 0.0
+risk_reduction_rel = risk_reduction_abs / base_prob if base_prob > 0 else 0
 
-
-# ------------------ 5. KPI row ------------------
+# ------------------ 6. KPI row ------------------
 st.divider()
-kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
-kpi_col1.metric("Baseline VTE Risk", f"{base_prob:.1%}")
-kpi_col2.metric(
+k1, k2, k3 = st.columns(3)
+k1.metric("Baseline VTE Risk", f"{base_prob:.1%}")
+k2.metric(
     "Post-intervention Risk",
     f"{new_prob:.1%}",
     delta=f"{-risk_reduction_abs:.1%}",
     delta_color="inverse",
 )
-kpi_col3.metric("Relative Risk Change", f"{risk_reduction_rel:.1%}")
+k3.metric("Relative Risk Change", f"{risk_reduction_rel:.1%}")
 
+# ================== Tabs: Main / Curve / Heatmap ==================
+tab_main, tab_curve, tab_heat = st.tabs(
+    ["📌 Main View", "📈 Continuous Risk Curve", "🔥 Sensitivity Heatmap"]
+)
 
-# ================== 6. Proteins block ==================
-st.divider()
-st.subheader("🧬 Protein-level Changes")
-
-prot_col1, prot_col2 = st.columns(2)
-
-# 6.1 Protein expression shift (left)
-with prot_col1:
-    st.markdown("**Protein Expression Shift**")
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-
-    x = np.arange(len(proteins))
-    width = 0.35
+# ================== TAB 1: Main View ==================
+with tab_main:
+    st.subheader("🧬 Protein-level Changes")
+    prot_col1, prot_col2 = st.columns([1.25, 1])
 
     baseline_vals_arr = df_base.values[0]
     intervention_vals_arr = new_vals
+    delta_arr = intervention_vals_arr - baseline_vals_arr
 
-    ax.bar(
-        x - width / 2,
-        baseline_vals_arr,
-        width,
-        label="Baseline",
-        color="#BDC3C7",
-        edgecolor="#7F8C8D",
-    )
-    ax.bar(
-        x + width / 2,
-        intervention_vals_arr,
-        width,
-        label="Intervention",
-        color="#2ECC71",
-        edgecolor="#27AE60",
-    )
-
-    ax.axhline(0, color="#7F8C8D", linewidth=1, linestyle="--")
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(proteins)
-    ax.set_ylabel("Expression (Z-score)")
-    ax.set_xlabel("Proteins")
-    ax.set_title("Baseline vs Intervention")
-
-    # Annotate only noticeable changes
-    for i, (b, n) in enumerate(zip(baseline_vals_arr, intervention_vals_arr)):
-        delta = n - b
-        if abs(delta) > 0.05:
-            ax.text(
-                i + width / 2,
-                n if n >= 0 else n,
-                f"{delta:+.2f}",
-                ha="center",
-                va="bottom" if n >= 0 else "top",
-                fontsize=8,
-            )
-
-    ax.legend(loc="upper left", frameon=True)
-    fig.tight_layout()
-    st.pyplot(fig)
-
-# 6.2 Key proteins with significant drift (right)
-with prot_col2:
-    st.markdown("**Key Proteins With Significant Drift**")
-
-    drift_series = pd.Series(drift, index=proteins)
-    threshold = 0.01
-    top_n = 10
-    sig_drift = drift_series[drift_series.abs() > threshold]
-
-    if not sig_drift.empty:
-        sig_drift = sig_drift.reindex(
-            sig_drift.abs().sort_values(ascending=False).index
-        ).iloc[:top_n]
-
-        sig_drift_sorted = sig_drift.sort_values()
-
-        fig2, ax2 = plt.subplots(figsize=(7, 4))
-
-        y = np.arange(len(sig_drift_sorted))
-        values = sig_drift_sorted.values
-
-        bars = ax2.barh(
-            y,
-            values,
-            color=["#E74C3C" if v < 0 else "#3498DB" for v in values],
-            edgecolor="#2C3E50",
+    # --- Protein Expression Shift ---
+    with prot_col1:
+        df_plot = pd.DataFrame({
+            "Protein": proteins,
+            "Baseline": baseline_vals_arr,
+            "Intervention": intervention_vals_arr,
+            "Δ": delta_arr
+        })
+        df_long = df_plot.melt(
+            id_vars=["Protein", "Δ"],
+            value_vars=["Baseline", "Intervention"],
+            var_name="State",
+            value_name="Z"
         )
 
-        ax2.axvline(0, color="#7F8C8D", linewidth=1, linestyle="--")
+        fig_prot = px.bar(
+            df_long, x="Protein", y="Z", color="State",
+            barmode="group", template=PLOTLY_TEMPLATE,
+            color_discrete_map={"Baseline": GRAY, "Intervention": PRIMARY},
+            hover_data={"Δ":":+.3f", "Z":":.3f"}
+        )
 
-        ax2.set_yticks(y)
-        ax2.set_yticklabels(sig_drift_sorted.index)
-        ax2.set_xlabel("Protein Drift (Δ Z-score)")
+        # annotate noticeable changes
+        for _, row in df_plot.iterrows():
+            if abs(row["Δ"]) > 0.05:
+                fig_prot.add_annotation(
+                    x=row["Protein"], y=row["Intervention"],
+                    text=f"{row['Δ']:+.2f}",
+                    showarrow=False, yshift=10,
+                    font=dict(size=11, color=DARK)
+                )
 
-        # robust x-limits
-        v_min = float(values.min())
-        v_max = float(values.max())
-        if v_min == v_max:
-            v_min -= 0.01
-            v_max += 0.01
-        data_range = v_max - v_min
-        pad = max(0.1 * data_range, 0.01)
-        ax2.set_xlim(v_min - pad, v_max + pad)
+        fig_prot.update_layout(
+            height=420,
+            legend_title_text="State",
+            yaxis_title="Expression (Z-score)",
+            xaxis_title="Proteins",
+            title=dict(text="Baseline vs Intervention", x=0.01),
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
+        # better labels for short/long names
+        fig_prot.update_xaxes(
+            tickangle=-15,
+            tickfont=dict(size=12),
+            automargin=True
+        )
 
-        # annotate just outside bar ends
-        for bar, v in zip(bars, values):
-            bar_y = bar.get_y() + bar.get_height() / 2
-            offset = 0.03 * data_range if data_range > 0 else 0.01
-            if v >= 0:
-                text_x = v + offset
-                ha = "left"
-            else:
-                text_x = v - offset
-                ha = "right"
+        st.plotly_chart(fig_prot, use_container_width=True)
 
-            ax2.text(
-                text_x,
-                bar_y,
-                f"{v:+.3f}",
-                va="center",
-                ha=ha,
-                fontsize=9,
+    # --- Key Drift Proteins ---
+    with prot_col2:
+        drift_series = pd.Series(drift, index=proteins)
+        threshold = 0.01
+        sig_drift = drift_series[drift_series.abs() > threshold]
+
+        if not sig_drift.empty:
+            sig_drift = sig_drift.reindex(
+                sig_drift.abs().sort_values(ascending=False).index
+            ).iloc[:10]
+
+            df_sig = sig_drift.reset_index()
+            df_sig.columns = ["Protein", "Drift"]
+            df_sig = df_sig.sort_values("Drift")
+
+            fig_sig = px.bar(
+                df_sig, x="Drift", y="Protein", orientation="h",
+                template=PLOTLY_TEMPLATE, color="Drift",
+                color_continuous_scale=[(0.0, RED), (0.5, GRAY), (1.0, BLUE)],
+                hover_data={"Drift":":+.4f"}
             )
-
-        fig2.tight_layout()
-        st.pyplot(fig2)
-    else:
-        st.write("_No protein shows a substantial shift yet. Try stronger interventions._")
-
-
-# ================== 7. Behavior & risk block ==================
-st.divider()
-st.subheader("📈 Behavior & Risk")
-
-beh_col1, beh_col2 = st.columns([1.2, 1])
-
-# 7.1 Intervention summary + behavior magnitude (left)
-with beh_col1:
-    st.markdown("**Intervention Summary**")
-    active_interventions = {k: v for k, v in intervention_deltas.items() if v != 0}
-    if active_interventions:
-        st.write("Current behavior changes:")
-        for k, v in active_interventions.items():
-            st.info(f"**{k}**: {v:+.2f} unit")
-    else:
-        st.warning("Adjust behavior sliders in the sidebar to see their effects.")
-
-    st.markdown("**Behavior Changes (expressed in SD units)**")
-
-    sd_units = []
-    beh_labels = []
-    for b_name in behavior_names:
-        sd = float(behavior_std[b_name])
-        if sd > 0:
-            sd_units.append(intervention_deltas[b_name] / sd)
+            fig_sig.update_layout(
+                height=420,
+                coloraxis_showscale=False,
+                xaxis_title="Protein Drift (Δ Z-score)",
+                yaxis_title="",
+                title=dict(text="Top Drift Proteins", x=0.01),
+                margin=dict(l=10, r=10, t=50, b=10)
+            )
+            fig_sig.add_vline(x=0, line_width=1, line_dash="dash", line_color=DARK)
+            st.plotly_chart(fig_sig, use_container_width=True)
         else:
-            sd_units.append(0.0)
-        beh_labels.append(b_name)
+            st.info("No protein shows a substantial shift yet. Try stronger interventions.")
 
-    sd_series = pd.Series(sd_units, index=beh_labels)
+    st.subheader("📈 Behavior & Risk")
+    beh_col1, beh_col2 = st.columns([1.25, 1])
 
-    if sd_series.abs().sum() == 0:
-        st.write("_No behavior changes yet. Move sliders in the sidebar._")
-    else:
-        fig4, ax4 = plt.subplots(figsize=(6, 4))
-        x = np.arange(len(sd_series))
-        bars4 = ax4.bar(
-            x,
-            sd_series.values,
-            color=["#E74C3C" if v < 0 else "#3498DB" for v in sd_series.values],
-            edgecolor="#2C3E50",
-        )
-        ax4.axhline(0, color="#7F8C8D", linewidth=1, linestyle="--")
-        ax4.set_xticks(x)
-        ax4.set_xticklabels(sd_series.index, rotation=20, ha="right")
-        ax4.set_ylabel("Change (SD units)")
-        ax4.set_title("Magnitude of Behavior Interventions")
+    with beh_col1:
+        active_interventions = {k: v for k, v in intervention_deltas.items() if v != 0}
+        if active_interventions:
+            cols = st.columns(2)
+            for i, (k, v) in enumerate(active_interventions.items()):
+                cols[i % 2].metric(label=k, value=f"{v:+.2f}")
+        else:
+            st.warning("Adjust behavior sliders in the sidebar to see their effects.")
 
-        v_min2 = float(sd_series.min())
-        v_max2 = float(sd_series.max())
-        if v_min2 == v_max2:
-            v_min2 -= 0.1
-            v_max2 += 0.1
-        rng2 = v_max2 - v_min2
-        pad2 = max(0.1 * rng2, 0.05)
-        ax4.set_ylim(v_min2 - pad2, v_max2 + pad2)
+        sd_units = []
+        for b_name in behavior_names:
+            sd = float(behavior_std[b_name])
+            sd_units.append(intervention_deltas[b_name] / sd if sd > 0 else 0.0)
 
-        for bar, v in zip(bars4, sd_series.values):
-            y = bar.get_height()
-            offset = 0.03 * rng2 if rng2 > 0 else 0.05
-            ax4.text(
-                bar.get_x() + bar.get_width() / 2,
-                y + (offset if y >= 0 else -offset),
-                f"{v:+.2f}",
-                ha="center",
-                va="bottom" if y >= 0 else "top",
-                fontsize=8,
+        df_beh = pd.DataFrame({"Behavior": behavior_names, "Change_SD": sd_units})
+        if np.isclose(df_beh["Change_SD"].abs().sum(), 0):
+            st.write("_No behavior changes yet._")
+        else:
+            fig_beh = px.bar(
+                df_beh, x="Behavior", y="Change_SD",
+                template=PLOTLY_TEMPLATE, color="Change_SD",
+                color_continuous_scale=[(0.0, RED), (0.5, GRAY), (1.0, BLUE)],
+                hover_data={"Change_SD":":+.2f"}
             )
+            fig_beh.update_layout(
+                height=360,
+                coloraxis_showscale=False,
+                yaxis_title="Change (SD units)",
+                title=dict(text="Magnitude of Behavior Interventions", x=0.01),
+                margin=dict(l=10, r=10, t=50, b=10)
+            )
+            fig_beh.add_hline(y=0, line_width=1, line_dash="dash", line_color=DARK)
+            fig_beh.update_xaxes(tickangle=20, automargin=True)
+            st.plotly_chart(fig_beh, use_container_width=True)
 
-        fig4.tight_layout()
-        st.pyplot(fig4)
-
-# 7.2 Overall risk change (right)
-with beh_col2:
-    st.markdown("**Baseline vs Post-intervention VTE Risk**")
-
-    fig3, ax3 = plt.subplots(figsize=(4, 4))
-
-    labels = ["Baseline", "Post-intervention"]
-    risks = [base_prob, new_prob]
-    x_pos = np.arange(len(labels))
-
-    bars3 = ax3.bar(x_pos, risks, color=["#BDC3C7", "#2ECC71"], edgecolor="#7F8C8D")
-
-    ax3.set_xticks(x_pos)
-    ax3.set_xticklabels(labels)
-    ax3.set_ylabel("Predicted Risk (probability)")
-    ax3.set_ylim(0, max(risks) * 1.2 if max(risks) > 0 else 0.1)
-
-    for bar, r in zip(bars3, risks):
-        ax3.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height(),
-            f"{r:.3f}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
+    with beh_col2:
+        df_risk = pd.DataFrame({
+            "State": ["Baseline", "Post-intervention"],
+            "Risk": [base_prob, new_prob]
+        })
+        fig_risk = px.bar(
+            df_risk, x="State", y="Risk",
+            template=PLOTLY_TEMPLATE, color="State",
+            color_discrete_map={"Baseline": GRAY, "Post-intervention": PRIMARY},
+            text=df_risk["Risk"].map(lambda x: f"{x:.3f}")
         )
+        fig_risk.update_traces(textposition="outside")
+        fig_risk.update_layout(
+            height=360, showlegend=False,
+            yaxis_title="Predicted Risk (probability)",
+            title=dict(text="Overall Risk Change", x=0.01),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        fig_risk.update_yaxes(range=[0, max(df_risk["Risk"]) * 1.25 + 0.02])
+        fig_risk.add_annotation(
+            x=1, y=new_prob,
+            text=f"Relative change: {risk_reduction_rel:+.1%}",
+            showarrow=False, yshift=18,
+            font=dict(size=12, color=DARK)
+        )
+        st.plotly_chart(fig_risk, use_container_width=True)
 
-    ax3.set_title("Overall Risk Change")
-    fig3.tight_layout()
-    st.pyplot(fig3)
+# ================== TAB 2: Continuous Risk Curve ==================
+with tab_curve:
+    st.subheader("📈 Continuous Intervention → Risk Curve")
+    st.markdown(
+        "Select a behavior. The simulator sweeps intervention strength (default ±2SD) "
+        "and shows a continuous risk-response curve."
+    )
 
+    beh_choice = st.selectbox("Choose behavior", behavior_names, index=0)
+    sd = float(behavior_std[beh_choice])
+
+    sweep_range = st.slider("Sweep range (in SD units)", 0.5, 4.0, 2.0, 0.5)
+    num_points = st.slider("Number of sweep points", 20, 200, 60, 10)
+
+    deltas = np.linspace(-sweep_range * sd, sweep_range * sd, num_points)
+
+    risks = []
+    for d in deltas:
+        betas = coef_matrix.loc[proteins, beh_choice].values
+        drift_tmp = betas * d
+
+        vals_tmp = np.clip(df_base.values[0] + drift_tmp, -5, 5)
+        df_tmp = pd.DataFrame([vals_tmp], columns=proteins)
+        r = risk_model.predict_proba(df_tmp)[0, 1]
+        risks.append(r)
+
+    df_curve = pd.DataFrame({
+        "Delta_raw": deltas,
+        "Delta_SD": deltas / sd if sd > 0 else deltas,
+        "Risk": risks
+    })
+
+    fig_curve = px.line(
+        df_curve, x="Delta_SD", y="Risk",
+        template=PLOTLY_TEMPLATE, markers=True,
+        hover_data={"Delta_raw":":+.2f", "Risk":":.3f"}
+    )
+    fig_curve.update_layout(
+        height=480,
+        xaxis_title=f"Δ {beh_choice} (SD units)",
+        yaxis_title="Predicted VTE Risk",
+        title=dict(text=f"Risk curve for {beh_choice}", x=0.01),
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    fig_curve.add_hline(y=base_prob, line_width=1, line_dash="dash", line_color=DARK)
+    fig_curve.add_annotation(
+        x=df_curve["Delta_SD"].min(), y=base_prob,
+        text="Baseline risk", showarrow=False, yshift=10,
+        font=dict(size=11, color=DARK)
+    )
+    st.plotly_chart(fig_curve, use_container_width=True)
+
+# ================== TAB 3: Sensitivity Heatmap ==================
+with tab_heat:
+    st.subheader("🔥 Single-behavior Sensitivity Heatmap")
+    st.markdown(
+        "Sensitivity analysis for one behavior: sweep intervention strength (±2SD), "
+        "compute protein drifts, and render a protein-by-delta heatmap."
+    )
+
+    beh_choice2 = st.selectbox("Choose behavior for heatmap", behavior_names, index=2)
+    sd2 = float(behavior_std[beh_choice2])
+
+    sweep_range2 = st.slider(
+        "Heatmap sweep range (SD units)", 0.5, 4.0, 2.0, 0.5, key="hm_range"
+    )
+    num_points2 = st.slider(
+        "Heatmap sweep points", 10, 80, 30, 5, key="hm_points"
+    )
+
+    deltas2 = np.linspace(-sweep_range2 * sd2, sweep_range2 * sd2, num_points2)
+
+    heat = []
+    for d in deltas2:
+        betas = coef_matrix.loc[proteins, beh_choice2].values
+        drift_tmp = betas * d
+        heat.append(drift_tmp)
+
+    heat = np.array(heat).T  # proteins x points
+
+    df_heat = pd.DataFrame(
+        heat,
+        index=proteins,
+        columns=[f"{x/sd2:+.2f}SD" if sd2 > 0 else f"{x:+.2f}" for x in deltas2]
+    )
+
+    fig_heat = px.imshow(
+        df_heat,
+        aspect="auto",
+        template=PLOTLY_TEMPLATE,
+        color_continuous_scale=[[0, RED], [0.5, GRAY], [1, BLUE]],
+        labels=dict(color="Protein Drift (Δ Z-score)")
+    )
+    fig_heat.update_layout(
+        height=520,
+        title=dict(text=f"Sensitivity heatmap for {beh_choice2}", x=0.01),
+        xaxis_title=f"Δ {beh_choice2} (SD units)",
+        yaxis_title="Proteins",
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+    with st.expander("Heatmap table (ΔZ values)"):
+        st.dataframe(df_heat.style.format("{:+.4f}"))
