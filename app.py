@@ -160,8 +160,9 @@ new_vals = np.clip(df_base.values[0] + drift, -5, 5)
 df_new = pd.DataFrame([new_vals], columns=proteins)
 new_prob = risk_model.predict_proba(df_new)[0, 1]
 
-risk_reduction_abs = base_prob - new_prob
-risk_reduction_rel = risk_reduction_abs / base_prob if base_prob > 0 else 0
+# 统一用“变化”语义（new - base）
+risk_change_abs = new_prob - base_prob
+risk_change_rel = risk_change_abs / base_prob if base_prob > 0 else 0.0
 
 # ------------------ 6. KPI row ------------------
 st.divider()
@@ -170,10 +171,13 @@ k1.metric("Baseline VTE Risk", f"{base_prob:.1%}")
 k2.metric(
     "Post-intervention Risk",
     f"{new_prob:.1%}",
-    delta=f"{-risk_reduction_abs:.1%}",
-    delta_color="inverse",
+    delta=f"{risk_change_abs:.1%}",
+    delta_color="inverse",  # 风险下降为绿色，风险上升为红色
 )
-k3.metric("Relative Risk Change", f"{risk_reduction_rel:.1%}")
+k3.metric(
+    "Relative Risk Change",
+    f"{risk_change_rel:+.1%}",
+)
 
 # ================== Tabs: Main / Curve / Heatmap ==================
 tab_main, tab_curve, tab_heat = st.tabs(
@@ -197,6 +201,14 @@ with tab_main:
             "Intervention": intervention_vals_arr,
             "Δ": delta_arr
         })
+
+        # 按 |Δ| 排序，让变化最大的蛋白排在前面
+        order = (
+            df_plot.assign(abs_delta=lambda d: d["Δ"].abs())
+            .sort_values("abs_delta", ascending=False)["Protein"]
+            .tolist()
+        )
+
         df_long = df_plot.melt(
             id_vars=["Protein", "Δ"],
             value_vars=["Baseline", "Intervention"],
@@ -208,7 +220,7 @@ with tab_main:
             df_long, x="Protein", y="Z", color="State",
             barmode="group", template=PLOTLY_TEMPLATE,
             color_discrete_map={"Baseline": GRAY, "Intervention": PRIMARY},
-            hover_data={"Δ":":+.3f", "Z":":.3f"}
+            hover_data={"Δ":":+.3f", "Z":":.3f"},
         )
 
         # annotate noticeable changes
@@ -229,14 +241,15 @@ with tab_main:
             title=dict(text="Baseline vs Intervention", x=0.01),
             margin=dict(l=10, r=10, t=50, b=10),
         )
-        # better labels for short/long names
         fig_prot.update_xaxes(
-            tickangle=-15,
-            tickfont=dict(size=12),
+            categoryorder="array",
+            categoryarray=order,
+            tickangle=-20,
+            tickfont=dict(size=11),
             automargin=True
         )
 
-        st.plotly_chart(fig_prot, use_container_width=True)
+        st.plotly_chart(fig_prot, width="stretch")
 
     # --- Key Drift Proteins ---
     with prot_col2:
@@ -268,7 +281,7 @@ with tab_main:
                 margin=dict(l=10, r=10, t=50, b=10)
             )
             fig_sig.add_vline(x=0, line_width=1, line_dash="dash", line_color=DARK)
-            st.plotly_chart(fig_sig, use_container_width=True)
+            st.plotly_chart(fig_sig, width="stretch")
         else:
             st.info("No protein shows a substantial shift yet. Try stronger interventions.")
 
@@ -290,9 +303,14 @@ with tab_main:
             sd_units.append(intervention_deltas[b_name] / sd if sd > 0 else 0.0)
 
         df_beh = pd.DataFrame({"Behavior": behavior_names, "Change_SD": sd_units})
+
         if np.isclose(df_beh["Change_SD"].abs().sum(), 0):
             st.write("_No behavior changes yet._")
         else:
+            # 按 |Change_SD| 排序，突出主要干预
+            df_beh = df_beh.assign(abs_change=lambda d: d["Change_SD"].abs())
+            df_beh = df_beh.sort_values("abs_change", ascending=False)
+
             fig_beh = px.bar(
                 df_beh, x="Behavior", y="Change_SD",
                 template=PLOTLY_TEMPLATE, color="Change_SD",
@@ -308,34 +326,60 @@ with tab_main:
             )
             fig_beh.add_hline(y=0, line_width=1, line_dash="dash", line_color=DARK)
             fig_beh.update_xaxes(tickangle=20, automargin=True)
-            st.plotly_chart(fig_beh, use_container_width=True)
+            st.plotly_chart(fig_beh, width="stretch")
 
+    # ---- Overall Risk Change 图（美化版） ----
     with beh_col2:
+        # 根据方向设置颜色：下降=绿色，上升=红色
+        post_color = RED if risk_change_abs > 0 else PRIMARY
+
         df_risk = pd.DataFrame({
             "State": ["Baseline", "Post-intervention"],
             "Risk": [base_prob, new_prob]
         })
+
         fig_risk = px.bar(
             df_risk, x="State", y="Risk",
             template=PLOTLY_TEMPLATE, color="State",
-            color_discrete_map={"Baseline": GRAY, "Post-intervention": PRIMARY},
+            color_discrete_map={
+                "Baseline": GRAY,
+                "Post-intervention": post_color
+            },
             text=df_risk["Risk"].map(lambda x: f"{x:.3f}")
         )
         fig_risk.update_traces(textposition="outside")
+
+        direction = "↑ Risk increase" if risk_change_abs > 0 else "↓ Risk reduction"
+
+        # 统一 y 轴上限
+        y_top = max(df_risk["Risk"]) * 1.25 + 0.02
         fig_risk.update_layout(
-            height=360, showlegend=False,
+            height=360,
+            showlegend=False,
             yaxis_title="Predicted Risk (probability)",
             title=dict(text="Overall Risk Change", x=0.01),
             margin=dict(l=10, r=10, t=50, b=10)
         )
-        fig_risk.update_yaxes(range=[0, max(df_risk["Risk"]) * 1.25 + 0.02])
+        fig_risk.update_yaxes(range=[0, y_top])
+
+        # baseline 虚线，方便比较
+        fig_risk.add_hline(
+            y=base_prob,
+            line_width=1,
+            line_dash="dash",
+            line_color=DARK
+        )
+
         fig_risk.add_annotation(
-            x=1, y=new_prob,
-            text=f"Relative change: {risk_reduction_rel:+.1%}",
-            showarrow=False, yshift=18,
+            x=1,
+            y=y_top * 0.96,
+            text=f"{direction}: {risk_change_rel:+.1%}",
+            showarrow=False,
             font=dict(size=12, color=DARK)
         )
-        st.plotly_chart(fig_risk, use_container_width=True)
+
+        st.plotly_chart(fig_risk, width="stretch")
+
 
 # ================== TAB 2: Continuous Risk Curve ==================
 with tab_curve:
@@ -381,13 +425,37 @@ with tab_curve:
         title=dict(text=f"Risk curve for {beh_choice}", x=0.01),
         margin=dict(l=10, r=10, t=50, b=10)
     )
+
+    # baseline risk 虚线
     fig_curve.add_hline(y=base_prob, line_width=1, line_dash="dash", line_color=DARK)
     fig_curve.add_annotation(
         x=df_curve["Delta_SD"].min(), y=base_prob,
         text="Baseline risk", showarrow=False, yshift=10,
         font=dict(size=11, color=DARK)
     )
-    st.plotly_chart(fig_curve, use_container_width=True)
+
+    # 当前干预位置（如果这个行为有调整）
+    current_delta_raw = intervention_deltas[beh_choice]
+    current_delta_sd = current_delta_raw / sd if sd > 0 else 0.0
+    if current_delta_raw != 0:
+        fig_curve.add_vline(
+            x=current_delta_sd,
+            line_width=1,
+            line_dash="dot",
+            line_color=BLUE
+        )
+        fig_curve.add_annotation(
+            x=current_delta_sd,
+            y=max(risks),
+            text="Current intervention",
+            showarrow=True,
+            arrowhead=2,
+            ax=0,
+            ay=-40,
+            font=dict(size=11, color=DARK)
+        )
+
+    st.plotly_chart(fig_curve, width="stretch")
 
 # ================== TAB 3: Sensitivity Heatmap ==================
 with tab_heat:
@@ -430,6 +498,9 @@ with tab_heat:
         color_continuous_scale=[[0, RED], [0.5, GRAY], [1, BLUE]],
         labels=dict(color="Protein Drift (Δ Z-score)")
     )
+    # 颜色中心设为 0（替代 zmid 参数）
+    fig_heat.update_coloraxes(cmid=0.0)
+
     fig_heat.update_layout(
         height=520,
         title=dict(text=f"Sensitivity heatmap for {beh_choice2}", x=0.01),
@@ -437,7 +508,7 @@ with tab_heat:
         yaxis_title="Proteins",
         margin=dict(l=10, r=10, t=50, b=10)
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width="stretch")
 
     with st.expander("Heatmap table (ΔZ values)"):
         st.dataframe(df_heat.style.format("{:+.4f}"))
