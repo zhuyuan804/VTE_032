@@ -1,12 +1,16 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ------------------ Page config ------------------
 st.set_page_config(page_title="VTE Risk Digital Twin Simulator", layout="wide")
 
+# ------------------ Constants ------------------
 PLOTLY_TEMPLATE = "plotly_white"
 PRIMARY = "#2ECC71"
 GRAY = "#BDC3C7"
@@ -14,26 +18,98 @@ DARK = "#2C3E50"
 RED = "#E74C3C"
 BLUE = "#3498DB"
 
+# Unified figure settings for journal-style plots
+FIG_FONT_FAMILY = "Times New Roman"  # Commonly accepted by many journals
+FIG_BASE_FONT_SIZE = 14
+FIG_TITLE_SIZE = 16
+FIG_TICK_FONT_SIZE = 12
+FIG_WIDTH_PX = 900
+FIG_HEIGHT_PX = 600
+FIG_LINE_WIDTH = 2.0
+
+# ------------------ Export config for paper figures ------------------
+EXPORT_DIR = r"F:\project-32\11.online_predict"
+os.makedirs(EXPORT_DIR, exist_ok=True)
+
+
+def apply_paper_style(fig, width=FIG_WIDTH_PX, height=FIG_HEIGHT_PX):
+    """Apply journal-like styling to a Plotly figure."""
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        width=width,
+        height=height,
+        font=dict(
+            family=FIG_FONT_FAMILY,
+            size=FIG_BASE_FONT_SIZE,
+        ),
+        title=dict(
+            font=dict(
+                family=FIG_FONT_FAMILY,
+                size=FIG_TITLE_SIZE,
+            )
+        ),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            font=dict(size=FIG_BASE_FONT_SIZE - 2),
+        ),
+        margin=dict(l=60, r=20, t=60, b=60),
+    )
+    fig.update_xaxes(
+        showline=True,
+        linecolor="black",
+        linewidth=FIG_LINE_WIDTH,
+        ticks="outside",
+        tickwidth=FIG_LINE_WIDTH,
+        tickfont=dict(size=FIG_TICK_FONT_SIZE, family=FIG_FONT_FAMILY),
+        mirror=True,
+    )
+    fig.update_yaxes(
+        showline=True,
+        linecolor="black",
+        linewidth=FIG_LINE_WIDTH,
+        ticks="outside",
+        tickwidth=FIG_LINE_WIDTH,
+        tickfont=dict(size=FIG_TICK_FONT_SIZE, family=FIG_FONT_FAMILY),
+        mirror=True,
+    )
+    return fig
+
+
+def export_figure_for_paper(fig, filename_base,
+                            width=FIG_WIDTH_PX,
+                            height=FIG_HEIGHT_PX,
+                            scale=3):
+    """
+    Export a Plotly figure as PNG + PDF into EXPORT_DIR.
+    Requires kaleido (compatible version).
+    """
+    png_path = os.path.join(EXPORT_DIR, f"{filename_base}.png")
+    pdf_path = os.path.join(EXPORT_DIR, f"{filename_base}.pdf")
+
+    fig.write_image(png_path, width=width, height=height, scale=scale)
+    fig.write_image(pdf_path, width=width, height=height, scale=scale)
+
+    return png_path, pdf_path
+
+
 # ------------------ Global CSS (clean dashboard style) ------------------
 st.markdown(
     """
     <style>
-      /* Overall app typography + spacing */
       html, body, [class*="css"]  {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                       Roboto, "Helvetica Neue", Arial;
           color: #1f2937;
       }
       .block-container {
           padding-top: 1.2rem;
           padding-bottom: 2.5rem;
       }
-      /* Sidebar */
       section[data-testid="stSidebar"] {
           background: #F8FAFC;
           border-right: 1px solid #E5E7EB;
       }
-
-      /* KPI cards */
       div[data-testid="metric-container"] {
           background: white;
           border: 1px solid #EEF2F7;
@@ -41,14 +117,10 @@ st.markdown(
           border-radius: 14px;
           box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
       }
-
-      /* Tabs style */
       button[data-baseweb="tab"] {
           font-weight: 600;
           padding: 10px 14px;
       }
-
-      /* Plotly charts container */
       .stPlotlyChart {
           background: white;
           border: 1px solid #EEF2F7;
@@ -56,8 +128,6 @@ st.markdown(
           padding: 8px;
           box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
       }
-
-      /* Buttons */
       .stButton > button {
           border-radius: 10px;
           font-weight: 600;
@@ -78,6 +148,7 @@ st.markdown(
 def load_system():
     return joblib.load("vte_system.pkl")
 
+
 system = load_system()
 risk_model = system["risk_model"]
 coef_matrix = system["coef_matrix"]   # proteins x behaviors
@@ -86,20 +157,23 @@ behaviors_map = system["behaviors"]
 behavior_std = system["behavior_std"]
 behavior_names = list(behaviors_map.keys())
 
+
 # ------------------ 2. Helpers ------------------
 def init_state():
-    """Initialize session_state for sliders if missing."""
+    """Initialize session_state for all sliders if missing."""
     for p in proteins:
         st.session_state.setdefault(f"base_{p}", 0.0)
     for b in behavior_names:
         st.session_state.setdefault(f"delta_{b}", 0.0)
 
+
 def reset_all():
-    """Reset baseline & delta sliders to 0."""
+    """Reset all baseline & intervention sliders to 0."""
     for p in proteins:
         st.session_state[f"base_{p}"] = 0.0
     for b in behavior_names:
         st.session_state[f"delta_{b}"] = 0.0
+
 
 init_state()
 
@@ -107,16 +181,15 @@ init_state()
 st.title("🧬 VTE Risk Digital Twin Simulator")
 st.markdown(
     """
-Adjust lifestyle behaviors in the sidebar to simulate **plasma protein expression**
-changes and estimate the impact on **venous thromboembolism (VTE) risk**.
+Use the sidebar to adjust lifestyle behaviors, simulate **plasma protein expression**
+changes, and estimate the impact on **venous thromboembolism (VTE) risk**.
 """
 )
 
 # ------------------ 4. Sidebar ------------------
 st.sidebar.header("1. Baseline Protein Profile")
-st.sidebar.caption("All proteins default to population mean (Z-score = 0).")
+st.sidebar.caption("All proteins default to the population mean (Z-score = 0).")
 
-# Reset button
 st.sidebar.button("🔄 Reset all sliders", on_click=reset_all)
 
 baseline_vals = {}
@@ -160,7 +233,6 @@ new_vals = np.clip(df_base.values[0] + drift, -5, 5)
 df_new = pd.DataFrame([new_vals], columns=proteins)
 new_prob = risk_model.predict_proba(df_new)[0, 1]
 
-# 统一用“变化”语义（new - base）
 risk_change_abs = new_prob - base_prob
 risk_change_rel = risk_change_abs / base_prob if base_prob > 0 else 0.0
 
@@ -172,12 +244,9 @@ k2.metric(
     "Post-intervention Risk",
     f"{new_prob:.1%}",
     delta=f"{risk_change_abs:.1%}",
-    delta_color="inverse",  # 风险下降为绿色，风险上升为红色
+    delta_color="inverse",  # decrease = green, increase = red
 )
-k3.metric(
-    "Relative Risk Change",
-    f"{risk_change_rel:+.1%}",
-)
+k3.metric("Relative Risk Change", f"{risk_change_rel:+.1%}")
 
 # ================== Tabs: Main / Curve / Heatmap ==================
 tab_main, tab_curve, tab_heat = st.tabs(
@@ -189,69 +258,76 @@ with tab_main:
     st.subheader("🧬 Protein-level Changes")
     prot_col1, prot_col2 = st.columns([1.25, 1])
 
+    # store per-panel figures for later combination
+    fig_prot = None
+    fig_sig = None
+    fig_beh = None
+    fig_risk = None
+
     baseline_vals_arr = df_base.values[0]
     intervention_vals_arr = new_vals
     delta_arr = intervention_vals_arr - baseline_vals_arr
 
-    # --- Protein Expression Shift ---
+    # ---------- Panel A: Protein Expression Shift ----------
     with prot_col1:
-        df_plot = pd.DataFrame({
-            "Protein": proteins,
-            "Baseline": baseline_vals_arr,
-            "Intervention": intervention_vals_arr,
-            "Δ": delta_arr
-        })
+        # 根据绝对变化排序
+        order_idx = np.argsort(-np.abs(delta_arr))
+        ordered_proteins = [proteins[i] for i in order_idx]
+        baseline_ord = baseline_vals_arr[order_idx]
+        intervention_ord = intervention_vals_arr[order_idx]
 
-        # 按 |Δ| 排序，让变化最大的蛋白排在前面
-        order = (
-            df_plot.assign(abs_delta=lambda d: d["Δ"].abs())
-            .sort_values("abs_delta", ascending=False)["Protein"]
-            .tolist()
+        fig_prot = go.Figure()
+
+        # Baseline bars
+        fig_prot.add_trace(
+            go.Bar(
+                x=ordered_proteins,
+                y=baseline_ord,
+                name="Baseline",
+                marker_color=[GRAY] * len(ordered_proteins),
+                text=[f"{v:.3f}" if abs(v) > 1e-6 else "" for v in baseline_ord],
+                texttemplate="%{text}",
+                textposition="outside",
+                marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
+            )
         )
 
-        df_long = df_plot.melt(
-            id_vars=["Protein", "Δ"],
-            value_vars=["Baseline", "Intervention"],
-            var_name="State",
-            value_name="Z"
+        # Intervention bars
+        fig_prot.add_trace(
+            go.Bar(
+                x=ordered_proteins,
+                y=intervention_ord,
+                name="Intervention",
+                marker_color=[PRIMARY] * len(ordered_proteins),
+                text=[f"{v:.3f}" if abs(v) > 1e-6 else "" for v in intervention_ord],
+                texttemplate="%{text}",
+                textposition="outside",
+                marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
+            )
         )
-
-        fig_prot = px.bar(
-            df_long, x="Protein", y="Z", color="State",
-            barmode="group", template=PLOTLY_TEMPLATE,
-            color_discrete_map={"Baseline": GRAY, "Intervention": PRIMARY},
-            hover_data={"Δ":":+.3f", "Z":":.3f"},
-        )
-
-        # annotate noticeable changes
-        for _, row in df_plot.iterrows():
-            if abs(row["Δ"]) > 0.05:
-                fig_prot.add_annotation(
-                    x=row["Protein"], y=row["Intervention"],
-                    text=f"{row['Δ']:+.2f}",
-                    showarrow=False, yshift=10,
-                    font=dict(size=11, color=DARK)
-                )
 
         fig_prot.update_layout(
+            barmode="group",
             height=420,
             legend_title_text="State",
             yaxis_title="Expression (Z-score)",
             xaxis_title="Proteins",
-            title=dict(text="Baseline vs Intervention", x=0.01),
-            margin=dict(l=10, r=10, t=50, b=10),
+            title=dict(text="Protein Expression (Baseline vs Intervention)",
+                       x=0.02, xanchor="left"),
+            margin=dict(l=40, r=20, t=50, b=40),
         )
-        fig_prot.update_xaxes(
-            categoryorder="array",
-            categoryarray=order,
-            tickangle=-20,
-            tickfont=dict(size=11),
-            automargin=True
-        )
+        fig_prot.update_xaxes(tickangle=-20, automargin=True)
 
-        st.plotly_chart(fig_prot, width="stretch")
+        # 适当扩展 y 范围，防止数值被裁掉
+        max_y = max(baseline_ord.max(), intervention_ord.max(), 0)
+        min_y = min(baseline_ord.min(), intervention_ord.min(), 0)
+        padding = (max_y - min_y) * 0.25 if max_y != min_y else 0.2
+        fig_prot.update_yaxes(range=[min_y - padding, max_y + padding])
 
-    # --- Key Drift Proteins ---
+        fig_prot = apply_paper_style(fig_prot, width=FIG_WIDTH_PX, height=420)
+        st.plotly_chart(fig_prot, use_container_width=True)
+
+    # ---------- Panel B: Top Drift Proteins ----------
     with prot_col2:
         drift_series = pd.Series(drift, index=proteins)
         threshold = 0.01
@@ -266,106 +342,135 @@ with tab_main:
             df_sig.columns = ["Protein", "Drift"]
             df_sig = df_sig.sort_values("Drift")
 
-            fig_sig = px.bar(
-                df_sig, x="Drift", y="Protein", orientation="h",
-                template=PLOTLY_TEMPLATE, color="Drift",
-                color_continuous_scale=[(0.0, RED), (0.5, GRAY), (1.0, BLUE)],
-                hover_data={"Drift":":+.4f"}
+            colors_sig = [
+                RED if v < 0 else PRIMARY
+                for v in df_sig["Drift"]
+            ]
+
+            fig_sig = go.Figure()
+            fig_sig.add_trace(
+                go.Bar(
+                    x=df_sig["Drift"],
+                    y=df_sig["Protein"],
+                    orientation="h",
+                    marker_color=colors_sig,
+                    text=[f"{v:.3f}" if abs(v) > 1e-6 else "" for v in df_sig["Drift"]],
+                    texttemplate="%{text}",
+                    textposition="outside",
+                    marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
+                    showlegend=False,
+                )
             )
+
             fig_sig.update_layout(
                 height=420,
-                coloraxis_showscale=False,
                 xaxis_title="Protein Drift (Δ Z-score)",
-                yaxis_title="",
-                title=dict(text="Top Drift Proteins", x=0.01),
-                margin=dict(l=10, r=10, t=50, b=10)
+                yaxis_title="Proteins",
+                title=dict(text="Top Drift Proteins", x=0.02, xanchor="left"),
+                margin=dict(l=70, r=20, t=50, b=40),
             )
-            fig_sig.add_vline(x=0, line_width=1, line_dash="dash", line_color=DARK)
-            st.plotly_chart(fig_sig, width="stretch")
+            fig_sig.add_vline(
+                x=0, line_width=1.5, line_dash="dash", line_color=DARK
+            )
+            max_x = df_sig["Drift"].max()
+            min_x = df_sig["Drift"].min()
+            padding = (max_x - min_x) * 0.4 if max_x != min_x else 0.05
+            fig_sig.update_xaxes(range=[min_x - padding, max_x + padding])
+
+            fig_sig = apply_paper_style(fig_sig, width=FIG_WIDTH_PX, height=420)
+            st.plotly_chart(fig_sig, use_container_width=True)
         else:
             st.info("No protein shows a substantial shift yet. Try stronger interventions.")
 
     st.subheader("📈 Behavior & Risk")
     beh_col1, beh_col2 = st.columns([1.25, 1])
 
+    # ---------- Panel C: Magnitude of Behavior Interventions ----------
     with beh_col1:
-        active_interventions = {k: v for k, v in intervention_deltas.items() if v != 0}
-        if active_interventions:
-            cols = st.columns(2)
-            for i, (k, v) in enumerate(active_interventions.items()):
-                cols[i % 2].metric(label=k, value=f"{v:+.2f}")
-        else:
-            st.warning("Adjust behavior sliders in the sidebar to see their effects.")
-
         sd_units = []
         for b_name in behavior_names:
             sd = float(behavior_std[b_name])
             sd_units.append(intervention_deltas[b_name] / sd if sd > 0 else 0.0)
 
-        df_beh = pd.DataFrame({"Behavior": behavior_names, "Change_SD": sd_units})
+        df_beh = pd.DataFrame({"Behavior": behavior_names, "SD": sd_units})
+        df_beh = df_beh.assign(abs_change=lambda d: d["SD"].abs()).sort_values("abs_change", ascending=False)
 
-        if np.isclose(df_beh["Change_SD"].abs().sum(), 0):
-            st.write("_No behavior changes yet._")
-        else:
-            # 按 |Change_SD| 排序，突出主要干预
-            df_beh = df_beh.assign(abs_change=lambda d: d["Change_SD"].abs())
-            df_beh = df_beh.sort_values("abs_change", ascending=False)
+        bar_colors = [BLUE if v > 0 else RED for v in df_beh["SD"]]
 
-            fig_beh = px.bar(
-                df_beh, x="Behavior", y="Change_SD",
-                template=PLOTLY_TEMPLATE, color="Change_SD",
-                color_continuous_scale=[(0.0, RED), (0.5, GRAY), (1.0, BLUE)],
-                hover_data={"Change_SD":":+.2f"}
+        figC = go.Figure()
+        figC.add_trace(
+            go.Bar(
+                x=df_beh["Behavior"],
+                y=df_beh["SD"],
+                marker_color=bar_colors,
+                marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
+                text=[f"{v:.3f}" if abs(v) > 1e-6 else "" for v in df_beh["SD"]],
+                texttemplate="%{text}",
+                textposition="outside",
+                showlegend=False
             )
-            fig_beh.update_layout(
-                height=360,
-                coloraxis_showscale=False,
-                yaxis_title="Change (SD units)",
-                title=dict(text="Magnitude of Behavior Interventions", x=0.01),
-                margin=dict(l=10, r=10, t=50, b=10)
-            )
-            fig_beh.add_hline(y=0, line_width=1, line_dash="dash", line_color=DARK)
-            fig_beh.update_xaxes(tickangle=20, automargin=True)
-            st.plotly_chart(fig_beh, width="stretch")
+        )
 
-    # ---- Overall Risk Change 图（美化版） ----
+        # 🚀 扩展 Y 轴高度（关键行）
+        ymax = df_beh["SD"].max()
+        ymin = df_beh["SD"].min()
+        padding = (ymax - ymin) * 0.4 if ymax != ymin else 0.4
+        figC.update_yaxes(range=[ymin - padding, ymax + padding])
+
+        figC.update_layout(
+            height=360,
+            yaxis_title="Change (SD units)",
+            title=dict(text="Magnitude of Behavior Interventions", x=0.02),
+            margin=dict(l=40, r=20, t=50, b=40),
+        )
+
+        figC.add_hline(y=0, line_dash="dash", line_color=DARK)
+        figC.update_xaxes(tickangle=20)
+
+        figC = apply_paper_style(figC, FIG_WIDTH_PX, 360)
+        fig_beh = figC      
+        st.plotly_chart(figC, use_container_width=True)
+
+
+    # ---------- Panel D: Overall Risk Change ----------
     with beh_col2:
-        # 根据方向设置颜色：下降=绿色，上升=红色
         post_color = RED if risk_change_abs > 0 else PRIMARY
 
-        df_risk = pd.DataFrame({
-            "State": ["Baseline", "Post-intervention"],
-            "Risk": [base_prob, new_prob]
-        })
+        baseline_val = base_prob
+        post_val = new_prob
 
-        fig_risk = px.bar(
-            df_risk, x="State", y="Risk",
-            template=PLOTLY_TEMPLATE, color="State",
-            color_discrete_map={
-                "Baseline": GRAY,
-                "Post-intervention": post_color
-            },
-            text=df_risk["Risk"].map(lambda x: f"{x:.3f}")
+        fig_risk = go.Figure()
+        fig_risk.add_trace(
+            go.Bar(
+                x=["Baseline", "Post-intervention"],
+                y=[baseline_val, post_val],
+                marker_color=[GRAY, post_color],
+                text=[
+                    f"{baseline_val:.3f}" if abs(baseline_val) > 1e-6 else "",
+                    f"{post_val:.3f}" if abs(post_val) > 1e-6 else ""
+                ],
+                texttemplate="%{text}",
+                textposition="outside",
+                marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
+                showlegend=False,
+            )
         )
-        fig_risk.update_traces(textposition="outside")
 
-        direction = "↑ Risk increase" if risk_change_abs > 0 else "↓ Risk reduction"
+        direction = "Risk increase" if risk_change_abs > 0 else "Risk reduction"
+        y_top = max(baseline_val, post_val) * 1.25 + 0.02
 
-        # 统一 y 轴上限
-        y_top = max(df_risk["Risk"]) * 1.25 + 0.02
         fig_risk.update_layout(
-            height=360,
-            showlegend=False,
+            height=420,
             yaxis_title="Predicted Risk (probability)",
-            title=dict(text="Overall Risk Change", x=0.01),
-            margin=dict(l=10, r=10, t=50, b=10)
+            xaxis_title="State",
+            title=dict(text="Overall Risk Change", x=0.02, xanchor="left"),
+            margin=dict(l=50, r=20, t=60, b=40),
         )
         fig_risk.update_yaxes(range=[0, y_top])
 
-        # baseline 虚线，方便比较
         fig_risk.add_hline(
-            y=base_prob,
-            line_width=1,
+            y=baseline_val,
+            line_width=1.5,
             line_dash="dash",
             line_color=DARK
         )
@@ -375,18 +480,165 @@ with tab_main:
             y=y_top * 0.96,
             text=f"{direction}: {risk_change_rel:+.1%}",
             showarrow=False,
-            font=dict(size=12, color=DARK)
+            font=dict(size=FIG_BASE_FONT_SIZE,
+                    family=FIG_FONT_FAMILY, color=DARK),
         )
 
-        st.plotly_chart(fig_risk, width="stretch")
+        fig_risk = apply_paper_style(fig_risk, width=FIG_WIDTH_PX, height=420)
+        st.plotly_chart(fig_risk, use_container_width=True)
 
+        # ❌ 删除按钮：不展示 PDF/PNG 导出功能
+
+
+    # ---------- Export combined Main View (A–D) ----------
+    st.markdown("---")
+    st.markdown("### Export combined Main View (panels A–D)")
+
+    if st.button("💾 Export combined Main View (PNG + PDF)", key="export_main_view"):
+        if fig_prot is None or fig_risk is None:
+            st.error("Protein or Overall Risk plots are missing.")
+        elif fig_sig is None:
+            st.error("Top Drift Proteins plot is missing (no significant drifts).")
+        elif fig_beh is None:
+            st.error("Magnitude of Behavior Interventions plot is missing.")
+        else:
+            combined = make_subplots(
+                rows=2,
+                cols=2,
+                subplot_titles=(
+                    "Protein Expression (Baseline vs Intervention)",
+                    "Top Drift Proteins",
+                    "Magnitude of Behavior Interventions",
+                    "Overall Risk Change",
+                ),
+                horizontal_spacing=0.18,
+                vertical_spacing=0.20,
+            )
+
+            # Panel A traces
+            for trace in fig_prot.data:
+                combined.add_trace(trace, row=1, col=1)
+
+            # Panel B traces
+            for trace in fig_sig.data:
+                combined.add_trace(trace, row=1, col=2)
+
+            # Panel C traces
+            for trace in fig_beh.data:
+                combined.add_trace(trace, row=2, col=1)
+
+            # Panel D trace（重新构建，确保数值标签）
+            combined.add_trace(
+                go.Bar(
+                    x=["Baseline", "Post-intervention"],
+                    y=[baseline_val, post_val],
+                    marker_color=[GRAY, PRIMARY],
+                    marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
+                    showlegend=False,
+                    text=[f"{baseline_val:.3f}" if abs(baseline_val) > 1e-6 else "",
+                    f"{post_val:.3f}" if abs(post_val) > 1e-6 else ""],
+                    texttemplate="%{text}",
+                    textposition="outside",
+                ),
+                row=2, col=2
+            )
+
+            # baseline hline in panel D
+            combined.add_hline(
+                y=baseline_val,
+                line_dash="dash",
+                line_width=1.5,
+                line_color=DARK,
+                row=2, col=2
+            )
+
+            # risk reduction annotation in panel D
+            combined.add_annotation(
+                x="Post-intervention",
+                y=baseline_val * 1.05,
+                xref="x4", yref="y4",
+                text=f"Risk reduction: {risk_change_rel:+.1%}",
+                showarrow=False,
+                font=dict(size=FIG_TICK_FONT_SIZE,
+                          family=FIG_FONT_FAMILY, color=DARK),
+            )
+
+            # Axis titles
+            combined.update_xaxes(title_text="Proteins", row=1, col=1)
+            combined.update_yaxes(title_text="Expression (Z-score)", row=1, col=1)
+
+            combined.update_xaxes(title_text="Protein Drift (Δ Z-score)", row=1, col=2)
+            combined.update_yaxes(title_text="Proteins", row=1, col=2)
+
+            combined.update_xaxes(title_text="Behavior", row=2, col=1)
+            combined.update_yaxes(title_text="Change (SD units)", row=2, col=1)
+
+            combined.update_xaxes(title_text="State", row=2, col=2)
+            combined.update_yaxes(title_text="Predicted Risk (probability)", row=2, col=2)
+
+            combined = apply_paper_style(combined, width=1200, height=950)
+            combined.update_layout(showlegend=False)
+
+            # remove any colorbar if exists
+            for attr in list(combined.layout):
+                if attr.startswith("coloraxis"):
+                    getattr(combined.layout, attr).showscale = False
+
+            # Panel labels A/B/C/D
+            label_font = dict(family=FIG_FONT_FAMILY, size=18, color="black")
+
+            combined.add_annotation(
+                text="A",
+                xref="x domain", yref="y domain",
+                x=0, y=1,
+                xanchor="left", yanchor="top",
+                showarrow=False,
+                font=label_font,
+                row=1, col=1
+            )
+            combined.add_annotation(
+                text="B",
+                xref="x domain", yref="y domain",
+                x=0, y=1,
+                xanchor="left", yanchor="top",
+                showarrow=False,
+                font=label_font,
+                row=1, col=2
+            )
+            combined.add_annotation(
+                text="C",
+                xref="x domain", yref="y domain",
+                x=0, y=1,
+                xanchor="left", yanchor="top",
+                showarrow=False,
+                font=label_font,
+                row=2, col=1
+            )
+            combined.add_annotation(
+                text="D",
+                xref="x domain", yref="y domain",
+                x=0, y=1,
+                xanchor="left", yanchor="top",
+                showarrow=False,
+                font=label_font,
+                row=2, col=2
+            )
+
+            png_path, pdf_path = export_figure_for_paper(
+                combined,
+                filename_base="main_view_panel",
+                width=1200,
+                height=950,
+                scale=3,
+            )
+            st.success(f"Exported combined figure to:\n- {png_path}\n- {pdf_path}")
 
 # ================== TAB 2: Continuous Risk Curve ==================
 with tab_curve:
     st.subheader("📈 Continuous Intervention → Risk Curve")
     st.markdown(
-        "Select a behavior. The simulator sweeps intervention strength (default ±2SD) "
-        "and shows a continuous risk-response curve."
+        "Select one behavior, sweep intervention strength (default ±2 SD), "
+        "and visualize the continuous risk–response curve."
     )
 
     beh_choice = st.selectbox("Choose behavior", behavior_names, index=0)
@@ -401,7 +653,6 @@ with tab_curve:
     for d in deltas:
         betas = coef_matrix.loc[proteins, beh_choice].values
         drift_tmp = betas * d
-
         vals_tmp = np.clip(df_base.values[0] + drift_tmp, -5, 5)
         df_tmp = pd.DataFrame([vals_tmp], columns=proteins)
         r = risk_model.predict_proba(df_tmp)[0, 1]
@@ -415,34 +666,47 @@ with tab_curve:
 
     fig_curve = px.line(
         df_curve, x="Delta_SD", y="Risk",
-        template=PLOTLY_TEMPLATE, markers=True,
-        hover_data={"Delta_raw":":+.2f", "Risk":":.3f"}
+        markers=True,
+        hover_data={"Delta_raw": ":+.2f", "Risk": ":.3f"},
     )
+    fig_curve.update_traces(
+        line=dict(width=FIG_LINE_WIDTH),
+        marker=dict(size=6,
+                    line=dict(width=FIG_LINE_WIDTH / 1.5, color="black")),
+    )
+
     fig_curve.update_layout(
         height=480,
         xaxis_title=f"Δ {beh_choice} (SD units)",
         yaxis_title="Predicted VTE Risk",
-        title=dict(text=f"Risk curve for {beh_choice}", x=0.01),
-        margin=dict(l=10, r=10, t=50, b=10)
+        title=dict(text=f"Risk curve for {beh_choice}", x=0.02, xanchor="left"),
+        margin=dict(l=60, r=20, t=60, b=50),
     )
 
-    # baseline risk 虚线
-    fig_curve.add_hline(y=base_prob, line_width=1, line_dash="dash", line_color=DARK)
+    fig_curve.add_hline(
+        y=base_prob,
+        line_width=1.5,
+        line_dash="dash",
+        line_color=DARK,
+    )
     fig_curve.add_annotation(
-        x=df_curve["Delta_SD"].min(), y=base_prob,
-        text="Baseline risk", showarrow=False, yshift=10,
-        font=dict(size=11, color=DARK)
+        x=df_curve["Delta_SD"].min(),
+        y=base_prob,
+        text="Baseline risk",
+        showarrow=False,
+        yshift=10,
+        font=dict(size=FIG_BASE_FONT_SIZE - 2,
+                  family=FIG_FONT_FAMILY, color=DARK),
     )
 
-    # 当前干预位置（如果这个行为有调整）
     current_delta_raw = intervention_deltas[beh_choice]
     current_delta_sd = current_delta_raw / sd if sd > 0 else 0.0
     if current_delta_raw != 0:
         fig_curve.add_vline(
             x=current_delta_sd,
-            line_width=1,
+            line_width=1.5,
             line_dash="dot",
-            line_color=BLUE
+            line_color=BLUE,
         )
         fig_curve.add_annotation(
             x=current_delta_sd,
@@ -452,17 +716,28 @@ with tab_curve:
             arrowhead=2,
             ax=0,
             ay=-40,
-            font=dict(size=11, color=DARK)
+            font=dict(size=FIG_BASE_FONT_SIZE - 2,
+                      family=FIG_FONT_FAMILY, color=DARK),
         )
 
-    st.plotly_chart(fig_curve, width="stretch")
+    fig_curve = apply_paper_style(fig_curve, width=FIG_WIDTH_PX, height=480)
+    st.plotly_chart(fig_curve, use_container_width=True)
+
+    export_name = f"risk_curve_{beh_choice.replace(' ', '_')}"
+    if st.button("💾 Export Risk Curve (PNG + PDF)", key="export_curve"):
+        png_path, pdf_path = export_figure_for_paper(
+            fig_curve,
+            filename_base=export_name,
+        )
+        st.success(f"Exported to:\n- {png_path}\n- {pdf_path}")
 
 # ================== TAB 3: Sensitivity Heatmap ==================
 with tab_heat:
     st.subheader("🔥 Single-behavior Sensitivity Heatmap")
     st.markdown(
-        "Sensitivity analysis for one behavior: sweep intervention strength (±2SD), "
-        "compute protein drifts, and render a protein-by-delta heatmap."
+        "One-way sensitivity analysis for a single behavior: sweep intervention "
+        "strength (±2 SD), compute protein drifts, and visualize them as a "
+        "protein-by-intervention heatmap."
     )
 
     beh_choice2 = st.selectbox("Choose behavior for heatmap", behavior_names, index=2)
@@ -488,27 +763,28 @@ with tab_heat:
     df_heat = pd.DataFrame(
         heat,
         index=proteins,
-        columns=[f"{x/sd2:+.2f}SD" if sd2 > 0 else f"{x:+.2f}" for x in deltas2]
+        columns=[f"{x / sd2:+.2f}SD" if sd2 > 0 else f"{x:+.2f}" for x in deltas2],
     )
 
     fig_heat = px.imshow(
         df_heat,
         aspect="auto",
-        template=PLOTLY_TEMPLATE,
         color_continuous_scale=[[0, RED], [0.5, GRAY], [1, BLUE]],
-        labels=dict(color="Protein Drift (Δ Z-score)")
+        labels=dict(color="Protein Drift (Δ Z-score)"),
     )
-    # 颜色中心设为 0（替代 zmid 参数）
     fig_heat.update_coloraxes(cmid=0.0)
 
     fig_heat.update_layout(
         height=520,
-        title=dict(text=f"Sensitivity heatmap for {beh_choice2}", x=0.01),
+        title=dict(text=f"Sensitivity heatmap for {beh_choice2}",
+                   x=0.02, xanchor="left"),
         xaxis_title=f"Δ {beh_choice2} (SD units)",
         yaxis_title="Proteins",
-        margin=dict(l=10, r=10, t=50, b=10)
+        margin=dict(l=80, r=40, t=60, b=80),
     )
-    st.plotly_chart(fig_heat, width="stretch")
+
+    fig_heat = apply_paper_style(fig_heat, width=FIG_WIDTH_PX, height=520)
+    st.plotly_chart(fig_heat, use_container_width=True)
 
     with st.expander("Heatmap table (ΔZ values)"):
         st.dataframe(df_heat.style.format("{:+.4f}"))
