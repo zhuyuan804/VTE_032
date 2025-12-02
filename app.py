@@ -422,7 +422,9 @@ with tab_main:
                     marker_color=colors_sig,
                     text=[f"{v:.3f}" if abs(v) > 1e-6 else "" for v in df_sig["Drift"]],
                     texttemplate="%{text}",
-                    textposition="outside",
+                    # 关键修改：使用 auto，把文字放在柱子内部，避免相互重叠
+                    textposition="auto",
+                    insidetextanchor="middle",
                     marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
                     showlegend=False,
                 )
@@ -462,7 +464,6 @@ with tab_main:
         df_beh = df_beh.assign(abs_change=lambda d: d["SD"].abs()).sort_values("abs_change", ascending=False)
 
         bar_colors = [BLUE if v > 0 else RED for v in df_beh["SD"]]
-
         figC = go.Figure()
         figC.add_trace(
             go.Bar(
@@ -473,11 +474,11 @@ with tab_main:
                 text=[f"{v:.3f}" if abs(v) > 1e-6 else "" for v in df_beh["SD"]],
                 texttemplate="%{text}",
                 textposition="outside",
-                showlegend=False
+                showlegend=False,
             )
         )
 
-        # 扩展 Y 轴高度
+        # 扩展 Y 轴高度，避免数值被裁掉
         ymax = df_beh["SD"].max()
         ymin = df_beh["SD"].min()
         padding = (ymax - ymin) * 0.4 if ymax != ymin else 0.4
@@ -512,7 +513,7 @@ with tab_main:
                 marker_color=[GRAY, post_color],
                 text=[
                     f"{baseline_val:.3f}" if abs(baseline_val) > 1e-6 else "",
-                    f"{post_val:.3f}" if abs(post_val) > 1e-6 else ""
+                    f"{post_val:.3f}" if abs(post_val) > 1e-6 else "",
                 ],
                 texttemplate="%{text}",
                 textposition="outside",
@@ -537,7 +538,7 @@ with tab_main:
             y=baseline_val,
             line_width=1.5,
             line_dash="dash",
-            line_color=DARK
+            line_color=DARK,
         )
 
         fig_risk.add_annotation(
@@ -545,8 +546,7 @@ with tab_main:
             y=y_top * 0.96,
             text=f"{direction}: {risk_change_rel:+.1%}",
             showarrow=False,
-            font=dict(size=FIG_BASE_FONT_SIZE,
-                      family=FIG_FONT_FAMILY, color=DARK),
+            font=dict(size=FIG_BASE_FONT_SIZE, family=FIG_FONT_FAMILY, color=DARK),
         )
 
         fig_risk = apply_paper_style(fig_risk, width=FIG_WIDTH_PX, height=420)
@@ -599,12 +599,13 @@ with tab_main:
                     showlegend=False,
                     text=[
                         f"{baseline_val:.3f}" if abs(baseline_val) > 1e-6 else "",
-                        f"{post_val:.3f}" if abs(post_val) > 1e-6 else ""
+                        f"{post_val:.3f}" if abs(post_val) > 1e-6 else "",
                     ],
                     texttemplate="%{text}",
                     textposition="outside",
                 ),
-                row=2, col=2
+                row=2,
+                col=2,
             )
 
             # baseline hline in panel D
@@ -613,18 +614,19 @@ with tab_main:
                 line_dash="dash",
                 line_width=1.5,
                 line_color=DARK,
-                row=2, col=2
+                row=2,
+                col=2,
             )
 
             # risk reduction annotation in panel D
             combined.add_annotation(
                 x="Post-intervention",
                 y=baseline_val * 1.05,
-                xref="x4", yref="y4",
+                xref="x4",
+                yref="y4",
                 text=f"Risk reduction: {risk_change_rel:+.1%}",
                 showarrow=False,
-                font=dict(size=FIG_TICK_FONT_SIZE,
-                          family=FIG_FONT_FAMILY, color=DARK),
+                font=dict(size=FIG_TICK_FONT_SIZE, family=FIG_FONT_FAMILY, color=DARK),
             )
 
             # Axis titles
@@ -638,7 +640,9 @@ with tab_main:
             combined.update_yaxes(title_text="Change (SD units)", row=2, col=1)
 
             combined.update_xaxes(title_text="State", row=2, col=2)
-            combined.update_yaxes(title_text="Predicted Risk (probability)", row=2, col=2)
+            combined.update_yaxes(
+                title_text="Predicted Risk (probability)", row=2, col=2
+            )
 
             combined = apply_paper_style(combined, width=1200, height=950)
             combined.update_layout(showlegend=False)
@@ -653,39 +657,55 @@ with tab_main:
 
             combined.add_annotation(
                 text="A",
-                xref="x domain", yref="y domain",
-                x=0, y=1,
-                xanchor="left", yanchor="top",
+                xref="x domain",
+                yref="y domain",
+                x=0,
+                y=1,
+                xanchor="left",
+                yanchor="top",
                 showarrow=False,
                 font=label_font,
-                row=1, col=1
+                row=1,
+                col=1,
             )
             combined.add_annotation(
                 text="B",
-                xref="x domain", yref="y domain",
-                x=0, y=1,
-                xanchor="left", yanchor="top",
+                xref="x domain",
+                yref="y domain",
+                x=0,
+                y=1,
+                xanchor="left",
+                yanchor="top",
                 showarrow=False,
                 font=label_font,
-                row=1, col=2
+                row=1,
+                col=2,
             )
             combined.add_annotation(
                 text="C",
-                xref="x domain", yref="y domain",
-                x=0, y=1,
-                xanchor="left", yanchor="top",
+                xref="x domain",
+                yref="y domain",
+                x=0,
+                y=1,
+                xanchor="left",
+                yanchor="top",
                 showarrow=False,
                 font=label_font,
-                row=2, col=1
+                row=2,
+                col=1,
             )
             combined.add_annotation(
                 text="D",
-                xref="x domain", yref="y domain",
-                x=0, y=1,
-                xanchor="left", yanchor="top",
+                xref="x domain",
+                yref="y domain",
+                x=0,
+                y=1,
+                xanchor="left",
+                yanchor="top",
                 showarrow=False,
                 font=label_font,
-                row=2, col=2
+                row=2,
+                col=2,
             )
 
             # 统一导出 + 浏览器下载
@@ -725,21 +745,24 @@ with tab_curve:
         r = risk_model.predict_proba(df_tmp)[0, 1]
         risks.append(r)
 
-    df_curve = pd.DataFrame({
-        "Delta_raw": deltas,
-        "Delta_SD": deltas / sd if sd > 0 else deltas,
-        "Risk": risks
-    })
+    df_curve = pd.DataFrame(
+        {
+            "Delta_raw": deltas,
+            "Delta_SD": deltas / sd if sd > 0 else deltas,
+            "Risk": risks,
+        }
+    )
 
     fig_curve = px.line(
-        df_curve, x="Delta_SD", y="Risk",
+        df_curve,
+        x="Delta_SD",
+        y="Risk",
         markers=True,
         hover_data={"Delta_raw": ":+.2f", "Risk": ":.3f"},
     )
     fig_curve.update_traces(
         line=dict(width=FIG_LINE_WIDTH),
-        marker=dict(size=6,
-                    line=dict(width=FIG_LINE_WIDTH / 1.5, color="black")),
+        marker=dict(size=6, line=dict(width=FIG_LINE_WIDTH / 1.5, color="black")),
     )
 
     fig_curve.update_layout(
@@ -762,8 +785,7 @@ with tab_curve:
         text="Baseline risk",
         showarrow=False,
         yshift=10,
-        font=dict(size=FIG_BASE_FONT_SIZE - 2,
-                  family=FIG_FONT_FAMILY, color=DARK),
+        font=dict(size=FIG_BASE_FONT_SIZE - 2, family=FIG_FONT_FAMILY, color=DARK),
     )
 
     current_delta_raw = intervention_deltas[beh_choice]
@@ -783,8 +805,7 @@ with tab_curve:
             arrowhead=2,
             ax=0,
             ay=-40,
-            font=dict(size=FIG_BASE_FONT_SIZE - 2,
-                      family=FIG_FONT_FAMILY, color=DARK),
+            font=dict(size=FIG_BASE_FONT_SIZE - 2, family=FIG_FONT_FAMILY, color=DARK),
         )
 
     fig_curve = apply_paper_style(fig_curve, width=FIG_WIDTH_PX, height=480)
@@ -845,8 +866,7 @@ with tab_heat:
 
     fig_heat.update_layout(
         height=520,
-        title=dict(text=f"Sensitivity heatmap for {beh_choice2}",
-                   x=0.02, xanchor="left"),
+        title=dict(text=f"Sensitivity heatmap for {beh_choice2}", x=0.02, xanchor="left"),
         xaxis_title=f"Δ {beh_choice2} (SD units)",
         yaxis_title="Proteins",
         margin=dict(l=80, r=40, t=60, b=80),
