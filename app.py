@@ -28,7 +28,7 @@ FIG_HEIGHT_PX = 600
 FIG_LINE_WIDTH = 2.0
 
 # ------------------ Export config for paper figures ------------------
-# 使用相对路径，导出到当前目录，不自动创建文件夹
+# 使用相对路径，导出到当前目录
 EXPORT_DIR = "."
 
 
@@ -76,10 +76,13 @@ def apply_paper_style(fig, width=FIG_WIDTH_PX, height=FIG_HEIGHT_PX):
     return fig
 
 
-def export_figure_for_paper(fig, filename_base,
-                            width=FIG_WIDTH_PX,
-                            height=FIG_HEIGHT_PX,
-                            scale=3):
+def export_figure_for_paper(
+    fig,
+    filename_base,
+    width=FIG_WIDTH_PX,
+    height=FIG_HEIGHT_PX,
+    scale=3,
+):
     """
     Export a Plotly figure as PNG + PDF into EXPORT_DIR.
     Requires kaleido (compatible version).
@@ -91,6 +94,69 @@ def export_figure_for_paper(fig, filename_base,
     fig.write_image(pdf_path, width=width, height=height, scale=scale)
 
     return png_path, pdf_path
+
+
+def export_and_download_for_paper(
+    fig,
+    filename_base: str,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    scale: int = 3,
+    preview: bool = True,
+    caption: str | None = None,
+    key_prefix: str | None = None,
+):
+    """
+    统一的导出 + 浏览器下载助手：
+    1. 使用 export_figure_for_paper 导出 PNG & PDF；
+    2. 在页面中可选预览 PNG；
+    3. 提供两个 download_button 供下载。
+    """
+    export_kwargs = {"scale": scale}
+    if width is not None:
+        export_kwargs["width"] = width
+    if height is not None:
+        export_kwargs["height"] = height
+
+    png_path, pdf_path = export_figure_for_paper(fig, filename_base, **export_kwargs)
+
+    # 读取二进制数据
+    with open(png_path, "rb") as f:
+        png_bytes = f.read()
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    basename_png = os.path.basename(png_path)
+    basename_pdf = os.path.basename(pdf_path)
+
+    st.success(
+        f"✅ Exported figure files:\n- {basename_png}\n- {basename_pdf}"
+    )
+
+    if preview:
+        st.image(
+            png_bytes,
+            caption=caption or filename_base,
+            use_column_width=True,
+        )
+
+    key_prefix = key_prefix or filename_base
+
+    st.download_button(
+        label="⬇️ Download PNG",
+        data=png_bytes,
+        file_name=basename_png,
+        mime="image/png",
+        key=f"{key_prefix}_png",
+    )
+    st.download_button(
+        label="⬇️ Download PDF",
+        data=pdf_bytes,
+        file_name=basename_pdf,
+        mime="application/pdf",
+        key=f"{key_prefix}_pdf",
+    )
 
 
 # ------------------ Global CSS (clean dashboard style) ------------------
@@ -622,14 +688,17 @@ with tab_main:
                 row=2, col=2
             )
 
-            png_path, pdf_path = export_figure_for_paper(
+            # 统一导出 + 浏览器下载
+            export_and_download_for_paper(
                 combined,
                 filename_base="main_view_panel",
                 width=1200,
                 height=950,
                 scale=3,
+                preview=True,
+                caption="Main View (panels A–D)",
+                key_prefix="main_view_panel",
             )
-            st.success(f"Exported combined figure to:\n- {png_path}\n- {pdf_path}")
 
 # ================== TAB 2: Continuous Risk Curve ==================
 with tab_curve:
@@ -723,11 +792,13 @@ with tab_curve:
 
     export_name = f"risk_curve_{beh_choice.replace(' ', '_')}"
     if st.button("💾 Export Risk Curve (PNG + PDF)", key="export_curve"):
-        png_path, pdf_path = export_figure_for_paper(
+        export_and_download_for_paper(
             fig_curve,
             filename_base=export_name,
+            preview=True,
+            caption=f"Risk curve for {beh_choice}",
+            key_prefix=f"risk_curve_{beh_choice}",
         )
-        st.success(f"Exported to:\n- {png_path}\n- {pdf_path}")
 
 # ================== TAB 3: Sensitivity Heatmap ==================
 with tab_heat:
@@ -786,3 +857,12 @@ with tab_heat:
 
     with st.expander("Heatmap table (ΔZ values)"):
         st.dataframe(df_heat.style.format("{:+.4f}"))
+
+    if st.button("💾 Export Heatmap (PNG + PDF)", key="export_heatmap"):
+        export_and_download_for_paper(
+            fig_heat,
+            filename_base=f"heatmap_{beh_choice2.replace(' ', '_')}",
+            preview=True,
+            caption=f"Sensitivity heatmap for {beh_choice2}",
+            key_prefix=f"heatmap_{beh_choice2}",
+        )
