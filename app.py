@@ -28,8 +28,8 @@ FIG_HEIGHT_PX = 600
 FIG_LINE_WIDTH = 2.0
 
 # ------------------ Export config for paper figures ------------------
-EXPORT_DIR = r"F:\project-32\11.online_predict"
-os.makedirs(EXPORT_DIR, exist_ok=True)
+# 使用相对路径，导出到当前目录，不自动创建文件夹
+EXPORT_DIR = "."
 
 
 def apply_paper_style(fig, width=FIG_WIDTH_PX, height=FIG_HEIGHT_PX):
@@ -411,7 +411,7 @@ with tab_main:
             )
         )
 
-        # 🚀 扩展 Y 轴高度（关键行）
+        # 扩展 Y 轴高度
         ymax = df_beh["SD"].max()
         ymin = df_beh["SD"].min()
         padding = (ymax - ymin) * 0.4 if ymax != ymin else 0.4
@@ -428,9 +428,8 @@ with tab_main:
         figC.update_xaxes(tickangle=20)
 
         figC = apply_paper_style(figC, FIG_WIDTH_PX, 360)
-        fig_beh = figC      
+        fig_beh = figC
         st.plotly_chart(figC, use_container_width=True)
-
 
     # ---------- Panel D: Overall Risk Change ----------
     with beh_col2:
@@ -481,14 +480,11 @@ with tab_main:
             text=f"{direction}: {risk_change_rel:+.1%}",
             showarrow=False,
             font=dict(size=FIG_BASE_FONT_SIZE,
-                    family=FIG_FONT_FAMILY, color=DARK),
+                      family=FIG_FONT_FAMILY, color=DARK),
         )
 
         fig_risk = apply_paper_style(fig_risk, width=FIG_WIDTH_PX, height=420)
         st.plotly_chart(fig_risk, use_container_width=True)
-
-        # ❌ 删除按钮：不展示 PDF/PNG 导出功能
-
 
     # ---------- Export combined Main View (A–D) ----------
     st.markdown("---")
@@ -535,8 +531,10 @@ with tab_main:
                     marker_color=[GRAY, PRIMARY],
                     marker_line=dict(width=FIG_LINE_WIDTH, color="black"),
                     showlegend=False,
-                    text=[f"{baseline_val:.3f}" if abs(baseline_val) > 1e-6 else "",
-                    f"{post_val:.3f}" if abs(post_val) > 1e-6 else ""],
+                    text=[
+                        f"{baseline_val:.3f}" if abs(baseline_val) > 1e-6 else "",
+                        f"{post_val:.3f}" if abs(post_val) > 1e-6 else ""
+                    ],
                     texttemplate="%{text}",
                     textposition="outside",
                 ),
